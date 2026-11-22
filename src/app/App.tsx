@@ -61,7 +61,7 @@ export function App() {
   </main>;
 }
 
-function Home({ active, sessions, onStart, onResume }: { active?: TrainingSession; sessions: TrainingSession[]; onStart: () => void; onResume: () => void }) { return <div className="home-panel"><p className="muted">{active ? 'You have an unfinished workout.' : 'Ready when you are.'}</p><button className="primary-action start-action" onClick={active ? onResume : onStart}>{active ? 'Resume workout' : 'Start workout'} <span>→</span></button><section className="recent-section"><h2>Recent workouts</h2>{sessions.length === 0 ? <div className="empty-card"><strong>No recent sessions</strong><span>Completed workouts will appear here.</span></div> : sessions.slice(0, 3).map((session) => <article className="history-card" key={session.id}><strong><em>{categoryLabel(session.category)}</em>{formatSessionDate(session.startedAt)}</strong><span>Duration · {session.finishedAt ? `${Math.max(1, Math.round((new Date(session.finishedAt).getTime() - new Date(session.startedAt).getTime()) / 60000))} min` : 'in progress'}</span></article>)}</section></div>; }
+function Home({ active, sessions, onStart, onResume }: { active?: TrainingSession; sessions: TrainingSession[]; onStart: () => void; onResume: () => void }) { return <div className="home-panel"><p className="muted">{active ? 'You have an unfinished workout.' : 'Ready when you are.'}</p><button className="primary-action start-action" onClick={active ? onResume : onStart}>{active ? 'Resume workout' : 'Start workout'} <span>→</span></button><section className="recent-section"><h2>Recent workouts</h2>{sessions.length === 0 ? <div className="empty-card"><strong>No recent sessions</strong><span>Completed workouts will appear here.</span></div> : sessions.slice(0, 3).map((session) => <article className="history-card" key={session.id}><strong><em>{categoryLabel(session.category)}</em>{formatSessionDate(session.startedAt)}</strong></article>)}</section></div>; }
 
 function WorkoutStartForm({ onCancel, onStart }: { onCancel: () => void; onStart: (category: WorkoutCategory) => void }) { const [category, setCategory] = useState<WorkoutCategory>('strength'); return <div className="modal-backdrop"><form className="modal" onSubmit={(event) => { event.preventDefault(); onStart(category); }}><h2>Start workout</h2><p className="muted">What kind of workout are you doing?</p><select aria-label="Workout category" value={category} onChange={(event) => setCategory(event.target.value as WorkoutCategory)}><option value="strength">Strength</option><option value="cardio">Cardio</option><option value="mobility">Mobility</option><option value="other">Other</option></select><div className="form-actions"><button type="button" className="secondary-action" onClick={onCancel}>Cancel</button><button className="primary-action" type="submit">Start workout</button></div></form></div>; }
 
@@ -70,4 +70,31 @@ function Workout({ active, exercises, entries, sets, previous, onAdd, onChangeSe
 function Library({ exercises, onAdd, onArchive }: { exercises: Exercise[]; onAdd: () => void; onArchive: (id: string) => Promise<void> }) { const [query, setQuery] = useState(''); const filtered = useMemo(() => exercises.filter((exercise) => exercise.name.toLowerCase().includes(query.toLowerCase())), [exercises, query]); return <div className="stack"><div className="toolbar"><input className="search" aria-label="Search exercises" placeholder="Search exercises" value={query} onChange={(event) => setQuery(event.target.value)} /><button className="secondary-action" onClick={onAdd}>＋ Add</button></div>{filtered.map((exercise) => <div className="list-row" key={exercise.id}><span><strong>{exercise.name}</strong><small>{exercise.equipment ?? 'Standard exercise'}</small></span><button className="archive-action" onClick={() => void onArchive(exercise.id)}>Archive</button></div>)}{filtered.length === 0 && <div className="empty-card">No exercises found.</div>}</div>; }
 
 function ExerciseForm({ onCancel, onSave }: { onCancel: () => void; onSave: (input: Pick<Exercise, 'name' | 'muscleGroup' | 'equipment' | 'isCustom'>) => void }) { return <div className="modal-backdrop"><form className="modal" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); onSave({ name: String(form.get('name')), muscleGroup: String(form.get('muscleGroup')), equipment: String(form.get('equipment')), isCustom: true }); }}><h2>Add exercise</h2><input name="name" required placeholder="Exercise name" autoFocus /><input name="muscleGroup" placeholder="Muscle group (optional)" /><input name="equipment" placeholder="Equipment (optional)" /><div className="form-actions"><button type="button" className="secondary-action" onClick={onCancel}>Cancel</button><button className="primary-action" type="submit">Save exercise</button></div></form></div>; }
-function History({ sessions }: { sessions: TrainingSession[] }) { return <div className="stack">{sessions.map((session) => <article className="history-card" key={session.id}><strong><em>{categoryLabel(session.category)}</em>{formatSessionDate(session.startedAt)}</strong><span>Duration · {session.finishedAt ? `${Math.max(1, Math.round((new Date(session.finishedAt).getTime() - new Date(session.startedAt).getTime()) / 60000))} min` : 'in progress'}</span></article>)}{sessions.length === 0 && <div className="empty-card">No completed sessions yet.</div>}</div>; }
+export function History({ sessions }: { sessions: TrainingSession[] }) {
+  const [selectedSession, setSelectedSession] = useState<TrainingSession>();
+  const [detailEntries, setDetailEntries] = useState<ExerciseEntry[]>([]);
+  const [detailSets, setDetailSets] = useState<Record<string, SetEntry[]>>({});
+
+  async function openSession(session: TrainingSession) {
+    const nextEntries = await getExerciseEntries(session.id);
+    const nextSets: Record<string, SetEntry[]> = {};
+    for (const entry of nextEntries) nextSets[entry.id] = await getSetEntries(entry.id);
+    setSelectedSession(session);
+    setDetailEntries(nextEntries);
+    setDetailSets(nextSets);
+  }
+
+  if (selectedSession) return <div className="stack">
+    <button className="text-action history-back" onClick={() => setSelectedSession(undefined)}>← Back to history</button>
+    <div className="toolbar"><h2>{formatSessionDate(selectedSession.startedAt)}</h2><span className="muted">{categoryLabel(selectedSession.category)}</span></div>
+    {detailEntries.length === 0 && <div className="empty-card">No exercises recorded for this session.</div>}
+    {detailEntries.map((entry) => <article className="exercise-card" key={entry.id}>
+      <h2>{entry.exerciseNameSnapshot}</h2>
+      {detailSets[entry.id]?.map((set) => <div className="history-set" key={set.id}><span>Set {set.setNumber}</span><strong>{set.weightKg} kg × {set.reps}</strong><span>{set.completed ? 'Completed' : 'Not completed'}</span></div>)}
+    </article>)}
+  </div>;
+
+  return <div className="stack">{sessions.map((session) => <button className="history-card history-card-button" key={session.id} onClick={() => void openSession(session)}>
+    <strong><em>{categoryLabel(session.category)}</em>{formatSessionDate(session.startedAt)}</strong><span>View details →</span>
+  </button>)}{sessions.length === 0 && <div className="empty-card">No completed sessions yet.</div>}</div>;
+}
