@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import '../styles/app.css';
 import type { Exercise, ExerciseEntry, SetEntry, TrainingSession, WorkoutCategory } from '../types/domain';
-import { addExerciseToSession, addSet, archiveExercise, createSession, finishSession, getActiveSession, getExerciseEntries, getPreviousPerformance, getSetEntries, listExercises, listSessions, saveExercise, seedExercises, updateSet } from '../storage/repositories';
+import { addExerciseToSession, addSet, archiveExercise, createSession, deleteSession, finishSession, getActiveSession, getExerciseEntries, getPreviousPerformance, getSetEntries, listExercises, listSessions, saveExercise, seedExercises, updateSet } from '../storage/repositories';
 
 type Page = 'home' | 'workout' | 'library' | 'history';
 const titles: Record<Page, string> = { home: 'Your training log', workout: 'Active workout', library: 'Exercise library', history: 'Training history' };
@@ -45,6 +45,7 @@ export function App() {
   async function addExercise(exercise: Exercise) { if (!activeSession) return; const entry = await addExerciseToSession(activeSession.id, exercise); await addSet(entry.id); await loadEntries(activeSession.id); setNotice(`${exercise.name} added.`); }
   async function changeSet(set: SetEntry, field: 'weightKg' | 'reps' | 'completed', value: number | boolean) { const next = { ...set, [field]: value }; await updateSet(next); setSets((current) => ({ ...current, [set.exerciseEntryId]: current[set.exerciseEntryId].map((item) => item.id === set.id ? next : item) })); }
   async function completeWorkout() { if (!activeSession) return; await finishSession(activeSession); setActiveSession(undefined); setEntries([]); setSets({}); await refresh(); setPage('history'); setNotice('Workout saved.'); }
+  async function removeHistorySession(sessionId: string) { await deleteSession(sessionId); await refresh(); setNotice('Workout deleted.'); }
   async function saveNewExercise(input: Pick<Exercise, 'name' | 'muscleGroup' | 'equipment' | 'isCustom'>) { await saveExercise(input); setShowForm(false); await refresh(); setNotice('Exercise saved.'); }
   return <main className="app-shell">
     <header className="app-header"><p className="eyebrow">LIFT LOG</p><h1>{titles[page]}</h1></header>
@@ -52,7 +53,7 @@ export function App() {
       {page === 'home' && <Home active={activeSession} sessions={sessions} onStart={() => setShowStartForm(true)} onResume={() => setPage('workout')} />}
       {page === 'workout' && <Workout active={activeSession} exercises={exercises} entries={entries} sets={sets} previous={previous} onAdd={(exercise) => void addExercise(exercise)} onChangeSet={(set, field, value) => void changeSet(set, field, value)} onAddSet={async (entry) => { await addSet(entry.id); if (activeSession) await loadEntries(activeSession.id); }} onFinish={() => void completeWorkout()} />}
       {page === 'library' && <Library exercises={exercises} onAdd={() => setShowForm(true)} onArchive={async (id) => { await archiveExercise(id); await refresh(); }} />}
-      {page === 'history' && <History sessions={sessions} />}
+      {page === 'history' && <History sessions={sessions} onDelete={removeHistorySession} />}
       {showForm && <ExerciseForm onCancel={() => setShowForm(false)} onSave={(input) => void saveNewExercise(input)} />}
       {showStartForm && <WorkoutStartForm onCancel={() => setShowStartForm(false)} onStart={(category) => void startWorkout(category)} />}
       {notice && <p className="action-feedback" role="status">{notice}</p>}
@@ -70,7 +71,7 @@ function Workout({ active, exercises, entries, sets, previous, onAdd, onChangeSe
 function Library({ exercises, onAdd, onArchive }: { exercises: Exercise[]; onAdd: () => void; onArchive: (id: string) => Promise<void> }) { const [query, setQuery] = useState(''); const filtered = useMemo(() => exercises.filter((exercise) => exercise.name.toLowerCase().includes(query.toLowerCase())), [exercises, query]); return <div className="stack"><div className="toolbar"><input className="search" aria-label="Search exercises" placeholder="Search exercises" value={query} onChange={(event) => setQuery(event.target.value)} /><button className="secondary-action" onClick={onAdd}>＋ Add</button></div>{filtered.map((exercise) => <div className="list-row" key={exercise.id}><span><strong>{exercise.name}</strong><small>{exercise.equipment ?? 'Standard exercise'}</small></span><button className="archive-action" onClick={() => void onArchive(exercise.id)}>Archive</button></div>)}{filtered.length === 0 && <div className="empty-card">No exercises found.</div>}</div>; }
 
 function ExerciseForm({ onCancel, onSave }: { onCancel: () => void; onSave: (input: Pick<Exercise, 'name' | 'muscleGroup' | 'equipment' | 'isCustom'>) => void }) { return <div className="modal-backdrop"><form className="modal" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); onSave({ name: String(form.get('name')), muscleGroup: String(form.get('muscleGroup')), equipment: String(form.get('equipment')), isCustom: true }); }}><h2>Add exercise</h2><input name="name" required placeholder="Exercise name" autoFocus /><input name="muscleGroup" placeholder="Muscle group (optional)" /><input name="equipment" placeholder="Equipment (optional)" /><div className="form-actions"><button type="button" className="secondary-action" onClick={onCancel}>Cancel</button><button className="primary-action" type="submit">Save exercise</button></div></form></div>; }
-export function History({ sessions }: { sessions: TrainingSession[] }) {
+export function History({ sessions, onDelete }: { sessions: TrainingSession[]; onDelete: (sessionId: string) => Promise<void> }) {
   const [selectedSession, setSelectedSession] = useState<TrainingSession>();
   const [detailEntries, setDetailEntries] = useState<ExerciseEntry[]>([]);
   const [detailSets, setDetailSets] = useState<Record<string, SetEntry[]>>({});
@@ -84,6 +85,13 @@ export function History({ sessions }: { sessions: TrainingSession[] }) {
     setDetailSets(nextSets);
   }
 
+  async function deleteSelectedSession() {
+    if (!selectedSession || !window.confirm('Delete this workout and all of its recorded sets?')) return;
+    const sessionId = selectedSession.id;
+    await onDelete(sessionId);
+    setSelectedSession(undefined);
+  }
+
   if (selectedSession) return <div className="stack">
     <button className="text-action history-back" onClick={() => setSelectedSession(undefined)}>← Back to history</button>
     <div className="toolbar"><h2>{formatSessionDate(selectedSession.startedAt)}</h2><span className="muted">{categoryLabel(selectedSession.category)}</span></div>
@@ -92,6 +100,7 @@ export function History({ sessions }: { sessions: TrainingSession[] }) {
       <h2>{entry.exerciseNameSnapshot}</h2>
       {detailSets[entry.id]?.map((set) => <div className="history-set" key={set.id}><span>Set {set.setNumber}</span><strong>{set.weightKg} kg × {set.reps}</strong><span>{set.completed ? 'Completed' : 'Not completed'}</span></div>)}
     </article>)}
+    <button className="danger-action" onClick={() => void deleteSelectedSession()}>Delete workout</button>
   </div>;
 
   return <div className="stack">{sessions.map((session) => <button className="history-card history-card-button" key={session.id} onClick={() => void openSession(session)}>

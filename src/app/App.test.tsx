@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { App, History } from './App';
 import { addExerciseToSession, addSet, createSession, finishSession, listSessions, saveExercise } from '../storage/repositories';
 
@@ -28,11 +28,29 @@ describe('application shell actions', () => {
     await addSet(entry.id, { weightKg: 100, reps: 5 });
     await finishSession(session);
 
-    render(<History sessions={await listSessions()} />);
-    fireEvent.click(screen.getByRole('button', { name: /view details/i }));
+    render(<History sessions={await listSessions()} onDelete={async () => undefined} />);
+    fireEvent.click(screen.getAllByRole('button', { name: /view details/i })[0]);
 
     await waitFor(() => expect(screen.getByText('100 kg × 5')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /back to history/i })).toBeInTheDocument();
     expect(screen.queryByText(/duration/i)).not.toBeInTheDocument();
+  });
+
+  it('confirms before requesting deletion of a previous session', async () => {
+    const session = await createSession();
+    const exercise = await saveExercise({ name: 'Bench Press', isCustom: true });
+    const entry = await addExerciseToSession(session.id, exercise);
+    await addSet(entry.id, { weightKg: 60, reps: 8 });
+    await finishSession(session);
+
+    const onDelete = vi.fn(async () => undefined);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<History sessions={await listSessions()} onDelete={onDelete} />);
+    fireEvent.click(screen.getAllByRole('button', { name: /view details/i })[0]);
+    await waitFor(() => expect(screen.getByRole('button', { name: /delete workout/i })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /delete workout/i }));
+
+    await waitFor(() => expect(onDelete).toHaveBeenCalledWith(session.id));
+    vi.restoreAllMocks();
   });
 });

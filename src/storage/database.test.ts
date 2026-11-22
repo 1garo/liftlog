@@ -1,7 +1,7 @@
 import { deleteDB } from 'idb';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DATABASE_NAME, DATABASE_VERSION, openDatabase } from './database';
-import { listExercises, seedExercises } from './repositories';
+import { addExerciseToSession, addSet, createSession, deleteSession, finishSession, getExerciseEntries, getSetEntries, listExercises, listSessions, saveExercise, seedExercises } from './repositories';
 
 afterEach(async () => { await deleteDB(DATABASE_NAME); });
 
@@ -28,5 +28,19 @@ describe('logbook database', () => {
     await Promise.all([seedExercises(), seedExercises()]);
     const exercises = await listExercises();
     expect(exercises.map((exercise) => exercise.name)).toEqual(['Barbell Row', 'Barbell Squat', 'Bench Press', 'Deadlift', 'Overhead Press']);
+  });
+
+  it('deletes a session and its exercise entries and sets', async () => {
+    const session = await createSession();
+    const exercise = await saveExercise({ name: 'Squat', isCustom: true });
+    const entry = await addExerciseToSession(session.id, exercise);
+    await addSet(entry.id, { weightKg: 100, reps: 5 });
+    await finishSession(session);
+
+    await deleteSession(session.id);
+
+    expect(await listSessions()).toEqual([]);
+    expect(await getExerciseEntries(session.id)).toEqual([]);
+    expect(await getSetEntries(entry.id)).toEqual([]);
   });
 });

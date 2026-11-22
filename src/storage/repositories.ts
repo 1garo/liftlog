@@ -41,6 +41,19 @@ export async function archiveExercise(exerciseId: string): Promise<void> { const
 export async function getActiveSession(): Promise<TrainingSession | undefined> { const database = await openDatabase(); const sessions = await database.getAllFromIndex('sessions', 'by-status', 'in_progress'); database.close(); return sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0]; }
 export async function createSession(category: WorkoutCategory = 'strength'): Promise<TrainingSession> { const active = await getActiveSession(); if (active) return active; const session: TrainingSession = { id: id(), startedAt: now(), status: 'in_progress', category }; const database = await openDatabase(); await database.put('sessions', session); database.close(); return session; }
 export async function finishSession(session: TrainingSession): Promise<TrainingSession> { const finished = { ...session, status: 'completed' as const, finishedAt: now() }; const database = await openDatabase(); await database.put('sessions', finished); database.close(); return finished; }
+export async function deleteSession(sessionId: string): Promise<void> {
+  const database = await openDatabase();
+  const transaction = database.transaction(['sessions', 'exerciseEntries', 'setEntries'], 'readwrite');
+  const exerciseEntries = await transaction.objectStore('exerciseEntries').index('by-session-id').getAll(sessionId);
+  for (const entry of exerciseEntries) {
+    const sets = await transaction.objectStore('setEntries').index('by-exercise-entry-id').getAll(entry.id);
+    for (const set of sets) await transaction.objectStore('setEntries').delete(set.id);
+    await transaction.objectStore('exerciseEntries').delete(entry.id);
+  }
+  await transaction.objectStore('sessions').delete(sessionId);
+  await transaction.done;
+  database.close();
+}
 export async function listSessions(): Promise<TrainingSession[]> { const database = await openDatabase(); const sessions = await database.getAllFromIndex('sessions', 'by-started-at'); database.close(); return sessions.filter((session) => session.status === 'completed').sort((a, b) => b.startedAt.localeCompare(a.startedAt)); }
 export async function getExerciseEntries(sessionId: string): Promise<ExerciseEntry[]> { const database = await openDatabase(); const entries = await database.getAllFromIndex('exerciseEntries', 'by-session-id', sessionId); database.close(); return entries.sort((a, b) => a.order - b.order); }
 export async function getSetEntries(exerciseEntryId: string): Promise<SetEntry[]> { const database = await openDatabase(); const entries = await database.getAllFromIndex('setEntries', 'by-exercise-entry-id', exerciseEntryId); database.close(); return entries.sort((a, b) => a.setNumber - b.setNumber); }
